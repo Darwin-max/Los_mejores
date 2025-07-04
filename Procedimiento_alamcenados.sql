@@ -576,3 +576,224 @@ DELIMITER ;
 
 CALL generar_referencia_pago('PAY', @ref);
 SELECT @ref AS nueva_referencia;
+
+ -- Procedimientos almacenados de kevin
+
+-- 1. Registrar una nueva cuota de manejo calculando automáticamente el descuento.
+
+DELIMITER $$
+
+CREATE PROCEDURE RegistrarCuotaManejo(
+    IN tarjeta_id INT,
+    IN monto_base DECIMAL(10,2),
+    IN fecha_vencimiento DATE
+)
+BEGIN
+    DECLARE descuento_id INT;
+    DECLARE porcentaje_descuento DECIMAL(5,4);
+    DECLARE monto_final DECIMAL(10,2);
+
+    -- Obtener el descuento aplicable
+    SELECT TD.id_tipo_descuento, TD.porcentaje_descuento
+    INTO descuento_id, porcentaje_descuento
+    FROM Tarjeta_Descuento_Historico TDH
+    JOIN Tipo_Descuento TD ON TDH.tipo_descuento_id = TD.id_tipo_descuento
+    WHERE TDH.tarjeta_id_descuento = tarjeta_id
+      AND CURDATE() BETWEEN TDH.fecha_inicio_aplicacion AND IFNULL(TDH.fecha_fin_aplicacion, CURDATE())
+    LIMIT 1;
+
+    -- Calcular el monto final con descuento
+    IF descuento_id IS NOT NULL THEN
+        SET monto_final = monto_base * (1 - porcentaje_descuento);
+    ELSE
+        SET monto_final = monto_base;
+    END IF;
+
+    -- Insertar la nueva cuota de manejo
+    INSERT INTO Cuota_Manejo (
+        tarjeta_id_cuota, fecha_generacion, monto_base, id_tarjeta_descuento_historico, monto_final_a_pagar, fecha_vencimiento_pago, estado_cuota_id
+    ) VALUES (
+        tarjeta_id, CURDATE(), monto_base, descuento_id, monto_final, fecha_vencimiento, 1
+    );
+END$$
+
+DELIMITER ;
+
+CALL RegistrarCuotaManejo(1, 100.00, '2024-12-31');
+
+SELECT * FROM Cuota_Manejo;
+
+
+-- 2. Procesar pagos y actualizar el historial de pagos de los clientes.
+
+DELIMITER $$
+
+CREATE PROCEDURE ProcesarPago(
+    IN cuota_id INT,
+    IN monto_pagado DECIMAL(10,2),
+    IN metodo_pago_id INT,
+    IN referencia_transaccion VARCHAR(100),
+    IN empleado_id INT
+)
+BEGIN
+    DECLARE estado_cuota INT;
+
+    -- Insertar el pago
+    INSERT INTO Pago (
+        cuota_id_pago, monto_pagado, fecha_pago, metodo_pago_id, referencia_transaccion, empleado_registro_id
+    ) VALUES (
+        cuota_id, monto_pagado, NOW(), metodo_pago_id, referencia_transaccion, empleado_id
+    );
+
+    -- Actualizar el estado de la cuota
+    SELECT estado_cuota_id INTO estado_cuota
+    FROM Cuota_Manejo
+    WHERE id_cuota = cuota_id;
+
+    IF estado_cuota = 1 THEN -- Pendiente
+        UPDATE Cuota_Manejo
+        SET estado_cuota_id = 2 -- Pagada
+        WHERE id_cuota = cuota_id;
+    END IF;
+
+    -- Registrar en el historial de pagos
+    INSERT INTO Historial_Pagos (
+        pago_id_historial, fecha_registro_historial, tipo_evento_id_historial, observaciones
+    ) VALUES (
+        LAST_INSERT_ID(), NOW(), 1, CONCAT('Pago registrado para la cuota ', cuota_id)
+    );
+END$$
+
+DELIMITER ;
+
+CALL ProcesarPago(1, 100.00, 1, 'TRN001-C1-P1', 4);
+
+SELECT * FROM Pago;
+
+
+-- 5. Registrar nuevos clientes y tarjetas automáticamente con los datos de apertura.
+
+DELIMITER $$
+
+DROP PROCEDURE IF EXISTS RegistrarClienteYTarjeta;
+CREATE PROCEDURE RegistrarClienteYTarjeta(
+    IN nombre_completo VARCHAR(100),
+    IN correo_electronico VARCHAR(100),
+    IN numero_identificacion VARCHAR(30),
+    IN tipo_tarjeta_id INT,
+    IN marca_tarjeta_id INT,
+    IN cuenta_id INT,
+    IN linea_credito DECIMAL(18,2),
+    IN fecha_vencimiento DATE
+)
+BEGIN
+    DECLARE cliente_id INT;
+
+    -- Registrar el cliente
+    INSERT INTO Usuario (
+        nombre_completo, correo_electronico, username, password_hash, rol_id_usuario, activo
+    ) VALUES (
+        nombre_completo, correo_electronico, numero_identificacion, SHA2(numero_identificacion, 256), 3, TRUE
+    );
+
+    SET cliente_id = LAST_INSERT_ID();
+
+    INSERT INTO Cliente (
+        id_cliente, fecha_registro, numero_identificacion
+    ) VALUES (
+        cliente_id, CURDATE(), numero_identificacion
+    );
+
+    -- Registrar la tarjeta
+    INSERT INTO Tarjeta (
+        cliente_id_tarjeta, tipo_tarjeta_id, marca_tarjeta_id, cuenta_id_tarjeta, numero_tarjeta_hash, ultimos_4_digitos, fecha_emision, fecha_vencimiento, estado_tarjeta_id, linea_credito
+    ) VALUES (
+        cliente_id, tipo_tarjeta_id, marca_tarjeta_id, cuenta_id, SHA2(CONCAT(cliente_id, CURDATE()), 256), RIGHT(numero_identificacion, 4), CURDATE(), fecha_vencimiento, 1, linea_credito
+    );
+END$$
+
+DELIMITER ;
+
+CALL RegistrarClienteYTarjeta(
+    'Carlos Gómez', 
+    'carlos.gomez@banco.com', 
+    '1020304050', 
+    2, -- Tipo de tarjeta (Crédito)
+    1, -- Marca de tarjeta (Visa)
+    3, -- ID de cuenta asociada
+    5000.00, -- Línea de crédito
+    '2025-12-31' -- Fecha de vencimiento
+);
+SELECT * FROM Usuario;
+
+SELECT * FROM Cliente;
+
+SELECT * FROM Tarjeta;
+
+
+-- 15. Generar un reporte detallado de pagos por cliente, sucursal y método de pago.
+
+DELIMITER $$
+
+CREATE PROCEDURE ReportePagosDetallado(
+    IN fecha_inicio DATE,
+    IN fecha_fin DATE
+)
+BEGIN
+    SELECT 
+        U.nombre_completo AS cliente,
+        S.nombre_sucursal AS sucursal,
+        MP.nombre_metodo_pago AS metodo_pago,
+        COUNT(P.id_pago) AS total_pagos,
+        SUM(P.monto_pagado) AS monto_total
+    FROM Pago P
+    JOIN Cuota_Manejo CM ON P.cuota_id_pago = CM.id_cuota
+    JOIN Tarjeta T ON CM.tarjeta_id_cuota = T.id_tarjeta
+    JOIN Cliente C ON T.cliente_id_tarjeta = C.id_cliente
+    JOIN Usuario U ON C.id_cliente = U.id_usuario
+    JOIN Empleado E ON P.empleado_registro_id = E.id_empleado
+    JOIN Sucursal S ON E.sucursal_id_empleado = S.id_sucursal
+    JOIN Metodo_Pago MP ON P.metodo_pago_id = MP.id_metodo_pago
+    WHERE P.fecha_pago BETWEEN fecha_inicio AND fecha_fin
+    GROUP BY U.nombre_completo, S.nombre_sucursal, MP.nombre_metodo_pago
+    ORDER BY monto_total DESC;
+END$$
+
+DELIMITER ;
+
+CALL ReportePagosDetallado('2024-01-01', '2024-12-31');
+
+
+
+-- 20. Generar un reporte de clientes con tarjetas activas, cuotas vencidas y pagos realizados en el último año.
+
+DELIMITER $$
+
+CREATE PROCEDURE ReporteClientesTarjetasActivasCuotasVencidasPagos(
+    IN anio INT
+)
+BEGIN
+    SELECT 
+        U.nombre_completo AS cliente,
+        T.id_tarjeta AS tarjeta_id,
+        T.ultimos_4_digitos AS ultimos_digitos_tarjeta,
+        COUNT(CM.id_cuota) AS total_cuotas_vencidas,
+        SUM(CM.monto_final_a_pagar) AS monto_total_vencido,
+        COUNT(P.id_pago) AS total_pagos_realizados,
+        SUM(P.monto_pagado) AS monto_total_pagado
+    FROM Usuario U
+    JOIN Cliente C ON U.id_usuario = C.id_cliente
+    JOIN Tarjeta T ON C.id_cliente = T.cliente_id_tarjeta
+    JOIN Estado_Tarjeta ET ON T.estado_tarjeta_id = ET.id_estado_tarjeta
+    JOIN Cuota_Manejo CM ON T.id_tarjeta = CM.tarjeta_id_cuota
+    LEFT JOIN Pago P ON CM.id_cuota = P.cuota_id_pago
+    WHERE ET.nombre_estado_tarjeta = 'Activa'
+      AND CM.fecha_vencimiento_pago < CURDATE()
+      AND YEAR(P.fecha_pago) = anio
+    GROUP BY U.nombre_completo, T.id_tarjeta, T.ultimos_4_digitos
+    ORDER BY monto_total_vencido DESC, monto_total_pagado DESC;
+END$$
+
+DELIMITER ;
+
+CALL ReporteClientesTarjetasActivasCuotasVencidasPagos(2024);
