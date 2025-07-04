@@ -186,3 +186,19 @@ FROM Cuota_Manejo CM
 JOIN Tarjeta T ON CM.tarjeta_id_cuota = T.id_tarjeta
 WHERE CM.estado_cuota_id = (SELECT id_estado_cuota FROM Estado_Cuota WHERE nombre_estado_cuota = 'Pendiente')
 GROUP BY cliente_id_tarjeta;
+
+
+-- 15. Actualizar el estado de las tarjetas con más de 3 cuotas vencidas.
+
+CREATE EVENT ActualizarEstadoTarjetasConMultiplesCuotasVencidas
+ON SCHEDULE EVERY 1 DAY
+DO
+UPDATE Tarjeta
+SET estado_tarjeta_id = (SELECT id_estado_tarjeta FROM Estado_Tarjeta WHERE nombre_estado_tarjeta = 'Bloqueada')
+WHERE id_tarjeta IN (
+    SELECT tarjeta_id_cuota
+    FROM Cuota_Manejo
+    WHERE estado_cuota_id = (SELECT id_estado_cuota FROM Estado_Cuota WHERE nombre_estado_cuota = 'Vencida')
+    GROUP BY tarjeta_id_cuota
+    HAVING COUNT(*) > 3
+);
