@@ -12,3 +12,19 @@ BEGIN
     WHERE fecha_vencimiento <= CURDATE();
 END $$
 DELIMITER ;
+
+
+-- 9 Actualizar estados de préstamos
+DELIMITER $$
+CREATE EVENT evt_actualizar_estados_prestamos
+ON SCHEDULE EVERY 1 DAY
+STARTS '2025-01-01 01:30:00'
+DO
+BEGIN
+    UPDATE prestamos 
+    SET estado_id = 16 
+    WHERE saldo_restante = 0;
+END $$
+DELIMITER ;
+
+
