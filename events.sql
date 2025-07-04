@@ -41,3 +41,17 @@ BEGIN
     WHERE activo = TRUE;
 END $$
 DELIMITER ;
+
+
+-- 15 Renovar tarjetas automáticamente
+DELIMITER $$
+CREATE EVENT evt_renovar_tarjetas_automaticas
+ON SCHEDULE EVERY 1 MONTH
+STARTS '2025-01-01 07:00:00'
+DO
+BEGIN
+    UPDATE tarjetas_bancarias 
+    SET fecha_vencimiento = DATE_ADD(fecha_vencimiento, INTERVAL 3 YEAR)
+    WHERE fecha_vencimiento <= DATE_ADD(CURDATE(), INTERVAL 3 MONTH);
+END $$
+DELIMITER ;
