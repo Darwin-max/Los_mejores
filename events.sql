@@ -202,3 +202,28 @@ WHERE id_tarjeta IN (
     GROUP BY tarjeta_id_cuota
     HAVING COUNT(*) > 3
 );
+
+
+
+-- 19. Actualizar el estado de las cuentas usando cursores.
+
+CREATE EVENT ActualizarEstadoCuentasConCursores
+ON SCHEDULE EVERY 1 DAY
+DO
+BEGIN
+    DECLARE cuenta_id INT;
+    DECLARE saldo DECIMAL(10,2);
+    DECLARE cuenta_cursor CURSOR FOR SELECT id_cuenta, saldo_actual FROM Cuenta_Bancaria;
+
+    OPEN cuenta_cursor;
+    FETCH cuenta_cursor INTO cuenta_id, saldo;
+
+    WHILE saldo IS NOT NULL DO
+        IF saldo < 0 THEN
+            UPDATE Cuenta_Bancaria SET estado_cuenta_id = (SELECT id_estado_cuenta FROM Estado_Cuenta WHERE nombre_estado = 'Bloqueada') WHERE id_cuenta = cuenta_id;
+        END IF;
+        FETCH cuenta_cursor INTO cuenta_id, saldo;
+    END WHILE;
+
+    CLOSE cuenta_cursor;
+END;
