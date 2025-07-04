@@ -59,3 +59,24 @@ END $$
 DELIMITER ;
 
 
+-- 15. Activar tarjetas con movimiento reciente en 6 meses
+
+DELIMITER $$
+
+DROP EVENT IF EXISTS evt_activar_tarjetas_activas_recientes $$
+
+CREATE EVENT evt_activar_tarjetas_activas_recientes
+ON SCHEDULE EVERY 1 MONTH
+ENABLE
+DO
+BEGIN
+    UPDATE tarjeta
+    SET estado = 'Activa'
+    WHERE id IN (
+        SELECT DISTINCT tarjeta_id FROM pago
+        WHERE fecha > DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
+    )
+    AND estado = 'Inactiva';
+END $$
+
+DELIMITER ;
