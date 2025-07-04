@@ -55,3 +55,18 @@ BEGIN
     WHERE fecha_vencimiento <= DATE_ADD(CURDATE(), INTERVAL 3 MONTH);
 END $$
 DELIMITER ;
+
+
+-- 20 Notificar vencimientos próximos
+DELIMITER $$
+CREATE EVENT evt_notificar_vencimientos
+ON SCHEDULE EVERY 1 WEEK
+STARTS '2025-01-01 09:00:00'
+DO
+BEGIN
+    INSERT INTO historial_tarjetas (tarjeta_id, evento_id, descripcion)
+    SELECT id, 1, 'Tarjeta proxima a vencer'
+    FROM tarjetas_bancarias 
+    WHERE fecha_vencimiento <= DATE_ADD(CURDATE(), INTERVAL 90 DAY);
+END $$
+DELIMITER ;
