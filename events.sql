@@ -227,3 +227,27 @@ BEGIN
 
     CLOSE cuenta_cursor;
 END;
+
+
+-- 20. Generar un reporte de pagos por cliente usando cursores.
+
+CREATE EVENT GenerarReportePagosPorClienteConCursores
+ON SCHEDULE EVERY 1 MONTH
+DO
+BEGIN
+    DECLARE cliente_id INT;
+    DECLARE total_pagado DECIMAL(10,2);
+    DECLARE cliente_cursor CURSOR FOR SELECT cliente_id_tarjeta, SUM(P.monto_pagado) FROM Pago P JOIN Tarjeta T ON P.cuota_id_pago = T.id_tarjeta GROUP BY cliente_id_tarjeta;
+
+    OPEN cliente_cursor;
+    FETCH cliente_cursor INTO cliente_id, total_pagado;
+
+    WHILE cliente_id IS NOT NULL DO
+        INSERT INTO Reporte_Pagos_Clientes (cliente_id, total_pagado) VALUES (cliente_id, total_pagado);
+        FETCH cliente_cursor INTO cliente_id, total_pagado;
+    END WHILE;
+
+    CLOSE cliente_cursor;
+END;
+
+SHOW EVENTS;
