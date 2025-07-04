@@ -653,3 +653,49 @@ INSERT INTO Tarjetas (
     limite_credito
 ) VALUES 
 (1, 1, 2, 500000, 500000, 'Activa', '1111111111111111', '2027-12-31', 1000000);
+
+
+-- Al registrar un nuevo movimiento de tarjeta, actualizar el saldo de la tarjeta.
+
+DELIMITER //
+
+DROP TRIGGER IF EXISTS tr_actualizar_saldo_tarjeta;
+CREATE TRIGGER tr_actualizar_saldo_tarjeta
+AFTER INSERT ON Movimientos_tarjeta
+FOR EACH ROW
+BEGIN
+    DECLARE _saldo_actual DECIMAL(10,2);
+
+    SELECT saldo INTO _saldo_actual
+    FROM Tarjetas
+    WHERE id = NEW.tarjeta_id;
+
+    IF NEW.tipo_movimiento_tarjeta IN (1, 2) THEN
+        IF _saldo_actual >= NEW.monto THEN
+            UPDATE Tarjetas
+            SET saldo = _saldo_actual - NEW.monto
+            WHERE id = NEW.tarjeta_id;
+        ELSE
+            SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Saldo insuficiente para realizar esta operación.';
+        END IF;
+    
+    ELSEIF NEW.tipo_movimiento_tarjeta IN (3, 4) THEN
+        UPDATE Tarjetas
+        SET saldo = _saldo_actual + NEW.monto
+        WHERE id = NEW.tarjeta_id;
+    END IF;
+END //
+
+DELIMITER ;
+
+SELECT * FROM Tarjetas;
+
+INSERT INTO Movimientos_tarjeta(
+    tipo_movimiento_tarjeta,
+    tarjeta_id,
+    fecha,
+    monto,
+    cuotas
+) VALUES
+(2, 2, CURDATE(), 50000, 1);
