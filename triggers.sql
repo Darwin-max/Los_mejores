@@ -466,3 +466,190 @@ ORDER BY fecha_hora DESC;
 SELECT * 
 FROM Tarjeta 
 WHERE id_tarjeta = 3;
+
+
+-- Estos son los triggers de santiago
+
+-- Al actualizar los descuentos, recalcular las cuotas de manejo de las tarjetas afectadas.
+
+DELIMITER //
+
+DROP TRIGGER IF EXISTS tr_recalcular_cuotas_manejo_descuento;
+CREATE TRIGGER tr_recalcular_cuotas_manejo_descuento
+AFTER UPDATE ON Tipo_tarjetas
+FOR EACH ROW
+BEGIN
+    IF OLD.descuento <> NEW.descuento THEN
+        UPDATE Cuotas_de_manejo cm
+        JOIN Tarjetas t ON t.id = cm.tarjeta_id
+        SET cm.monto_total = t.monto_apertura - (t.monto_apertura * NEW.descuento / 100)
+        WHERE t.tipo_tarjeta_id = NEW.id;
+    END IF;
+END //
+
+DELIMITER ;
+
+UPDATE Tipo_tarjetas
+SET descuento = 3.0
+WHERE id = 1;
+
+SELECT * FROM Cuotas_de_manejo;
+
+
+-- Actualizar estado de cuota de manejo cuando se registre un pago
+
+DELIMITER //
+DROP TRIGGER IF EXISTS tr_actualizar_estado_cuota_manejo;
+CREATE TRIGGER tr_actualizar_estado_cuota_manejo
+AFTER INSERT ON Pagos
+FOR EACH ROW
+BEGIN
+    DECLARE _total_pago DECIMAL(10,2);
+    DECLARE _monto_total DECIMAL(10,2);
+
+    SELECT SUM(total_pago) INTO _total_pago 
+    FROM Pagos 
+    WHERE cuota_id = NEW.cuota_id;
+
+    SELECT monto_total INTO _monto_total 
+    FROM Cuotas_de_manejo 
+    WHERE id = NEW.cuota_id;
+
+    IF _total_pago >= _monto_total THEN
+        UPDATE Cuotas_de_manejo 
+        SET estado = 'Pago' 
+        WHERE id = NEW.cuota_id;
+    END IF;
+
+END //
+DELIMITER ;
+
+SELECT * FROM Cuotas_de_manejo;
+
+INSERT INTO Pagos(
+    cuota_id,
+    fecha_pago,
+    total_pago,
+    metodo_pago,
+    estado
+) VALUES(
+    47, CURDATE(), 47500.00, 'Tarjeta', 'Completado'
+);
+
+
+-- Bloquear tarjeta automáticamente al registrar 7 retiros consecutivos por tarjeta en menos de 1 dia
+
+DELIMITER //
+
+DROP TRIGGER IF EXISTS tr_bloquear_tarjeta_retiros_rapidos;
+CREATE TRIGGER tr_bloquear_tarjeta_retiros_rapidos
+AFTER INSERT ON Movimientos_tarjeta
+FOR EACH ROW
+BEGIN
+    DECLARE _cantidad_movimiento INT;
+
+    SELECT COUNT(*) INTO _cantidad_movimiento
+    FROM Movimientos_tarjeta
+    WHERE tarjeta_id = NEW.tarjeta_id AND tipo_movimiento_tarjeta = 2 AND fecha >= NOW() - INTERVAL 1 DAY;
+
+    IF NEW.tipo_movimiento_tarjeta = 2 THEN
+        IF _cantidad_movimiento >= 7 THEN
+            UPDATE Tarjetas SET estado = 'Bloqueada'
+            WHERE id = NEW.tarjeta_id;
+        END IF;
+    END IF;
+END //
+DELIMITER ;
+
+SELECT * FROM Tarjetas WHERE id = 3;
+
+INSERT INTO Movimientos_tarjeta (tipo_movimiento_tarjeta, tarjeta_id, monto, cuotas)
+VALUES 
+(2, 3, 10, 1),
+(2, 3, 20, 1),
+(2, 3, 30, 1),
+(2, 3, 40, 1),
+(2, 3, 50, 1),
+(2, 3, 60, 1),
+(2, 3, 70, 1);
+
+
+
+-- Evitar que un cliente tenga mas de una cuenta del mismo tipo.
+
+DELIMITER //
+
+DROP TRIGGER IF EXISTS tr_limitar_tipo_cuenta_por_cliente;
+CREATE TRIGGER tr_limitar_tipo_cuenta_por_cliente
+BEFORE INSERT ON Cuentas
+FOR EACH ROW
+BEGIN
+    DECLARE _cantidad INT;
+
+    SELECT COUNT(*) INTO _cantidad
+    FROM Cuentas
+    WHERE cliente_id = NEW.cliente_id AND tipo_cuenta_id = NEW.tipo_cuenta_id;
+
+    IF _cantidad > 0 THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'El cliente ya tiene una cuenta de este tipo.';
+    END IF;
+END //
+
+DELIMITER ;
+
+
+INSERT INTO Cuentas (
+    tipo_cuenta_id,
+    cliente_id, 
+    saldo, 
+    fecha_creacion
+) VALUES 
+(1, 1, 1500000, CURDATE());
+
+
+-- Al registrar una tarjeta, validar que el cliente no tenga más de 3 tarjetas activas
+
+DELIMITER //
+
+DROP TRIGGER IF EXISTS tr_limite_tarjetas_activas;
+CREATE TRIGGER tr_limite_tarjetas_activas
+BEFORE INSERT ON Tarjetas
+FOR EACH ROW
+BEGIN
+    DECLARE _cliente_id INT;
+    DECLARE _cantidad INT;
+
+    SELECT cliente_id INTO _cliente_id 
+    FROM Cuentas 
+    WHERE id = NEW.cuenta_id;
+
+    SELECT COUNT(*) INTO _cantidad
+    FROM Tarjetas t
+    JOIN Cuentas c ON t.cuenta_id = c.id
+    WHERE c.cliente_id = _cliente_id AND t.estado = 'Activa';
+
+    IF _cantidad >= 3 THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'El cliente ya tiene el número máximo de tarjetas activas (3).';
+    END IF;
+END //
+
+DELIMITER ;
+
+SELECT * FROM Cuentas;
+
+SELECT * FROM Tarjetas;
+
+INSERT INTO Tarjetas (
+    tipo_tarjeta_id, 
+    categoria_tarjeta_id, 
+    cuenta_id, 
+    monto_apertura, 
+    saldo,
+    estado, 
+    numero_tarjeta, 
+    fecha_expiracion, 
+    limite_credito
+) VALUES 
+(1, 1, 2, 500000, 500000, 'Activa', '1111111111111111', '2027-12-31', 1000000);
