@@ -80,3 +80,22 @@ BEGIN
 END $$
 
 DELIMITER ;
+
+
+-- 18. Verificar y ajustar montos negativos
+DELIMITER $$
+
+DROP EVENT IF EXISTS evt_ajuste_montos_negativos $$
+
+CREATE EVENT evt_ajuste_montos_negativos
+ON SCHEDULE EVERY 1 WEEK
+ENABLE
+DO
+BEGIN
+    UPDATE cuenta_bancaria
+    SET monto = 0, estado = 'Bloqueada'
+    WHERE monto < 0;
+
+END $$
+
+DELIMITER ;
