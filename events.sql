@@ -28,3 +28,16 @@ END $$
 DELIMITER ;
 
 
+-- 10 Generar cuotas mensuales automáticas
+DELIMITER $$
+CREATE EVENT evt_generar_cuotas_mensuales
+ON SCHEDULE EVERY 1 MONTH
+STARTS '2025-01-01 00:30:00'
+DO
+BEGIN
+    INSERT INTO registro_cuota (cuota_manejo_id, fecha_ultimo_cobro, monto_facturado, fecha_corte, fecha_limite_pago, estado_cuota_id, monto_a_pagar)
+    SELECT id, NOW(), monto_apertura, CURDATE(), DATE_ADD(CURDATE(), INTERVAL 15 DAY), 2, monto_apertura
+    FROM cuotas_manejo 
+    WHERE activo = TRUE;
+END $$
+DELIMITER ;
