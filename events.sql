@@ -171,3 +171,83 @@ BEGIN
 END $$
 
 DELIMITER ;
+
+
+-- Eventos de kevin 
+
+-- 13. Generar un reporte de clientes con pagos pendientes.
+
+CREATE EVENT GenerarReporteClientesConPagosPendientes
+ON SCHEDULE EVERY 1 MONTH
+DO
+INSERT INTO Reporte_Clientes_Pendientes (cliente_id, total_pendiente)
+SELECT cliente_id_tarjeta, SUM(monto_final_a_pagar)
+FROM Cuota_Manejo CM
+JOIN Tarjeta T ON CM.tarjeta_id_cuota = T.id_tarjeta
+WHERE CM.estado_cuota_id = (SELECT id_estado_cuota FROM Estado_Cuota WHERE nombre_estado_cuota = 'Pendiente')
+GROUP BY cliente_id_tarjeta;
+
+
+-- 15. Actualizar el estado de las tarjetas con más de 3 cuotas vencidas.
+
+CREATE EVENT ActualizarEstadoTarjetasConMultiplesCuotasVencidas
+ON SCHEDULE EVERY 1 DAY
+DO
+UPDATE Tarjeta
+SET estado_tarjeta_id = (SELECT id_estado_tarjeta FROM Estado_Tarjeta WHERE nombre_estado_tarjeta = 'Bloqueada')
+WHERE id_tarjeta IN (
+    SELECT tarjeta_id_cuota
+    FROM Cuota_Manejo
+    WHERE estado_cuota_id = (SELECT id_estado_cuota FROM Estado_Cuota WHERE nombre_estado_cuota = 'Vencida')
+    GROUP BY tarjeta_id_cuota
+    HAVING COUNT(*) > 3
+);
+
+
+
+-- 19. Actualizar el estado de las cuentas usando cursores.
+
+CREATE EVENT ActualizarEstadoCuentasConCursores
+ON SCHEDULE EVERY 1 DAY
+DO
+BEGIN
+    DECLARE cuenta_id INT;
+    DECLARE saldo DECIMAL(10,2);
+    DECLARE cuenta_cursor CURSOR FOR SELECT id_cuenta, saldo_actual FROM Cuenta_Bancaria;
+
+    OPEN cuenta_cursor;
+    FETCH cuenta_cursor INTO cuenta_id, saldo;
+
+    WHILE saldo IS NOT NULL DO
+        IF saldo < 0 THEN
+            UPDATE Cuenta_Bancaria SET estado_cuenta_id = (SELECT id_estado_cuenta FROM Estado_Cuenta WHERE nombre_estado = 'Bloqueada') WHERE id_cuenta = cuenta_id;
+        END IF;
+        FETCH cuenta_cursor INTO cuenta_id, saldo;
+    END WHILE;
+
+    CLOSE cuenta_cursor;
+END;
+
+
+-- 20. Generar un reporte de pagos por cliente usando cursores.
+
+CREATE EVENT GenerarReportePagosPorClienteConCursores
+ON SCHEDULE EVERY 1 MONTH
+DO
+BEGIN
+    DECLARE cliente_id INT;
+    DECLARE total_pagado DECIMAL(10,2);
+    DECLARE cliente_cursor CURSOR FOR SELECT cliente_id_tarjeta, SUM(P.monto_pagado) FROM Pago P JOIN Tarjeta T ON P.cuota_id_pago = T.id_tarjeta GROUP BY cliente_id_tarjeta;
+
+    OPEN cliente_cursor;
+    FETCH cliente_cursor INTO cliente_id, total_pagado;
+
+    WHILE cliente_id IS NOT NULL DO
+        INSERT INTO Reporte_Pagos_Clientes (cliente_id, total_pagado) VALUES (cliente_id, total_pagado);
+        FETCH cliente_cursor INTO cliente_id, total_pagado;
+    END WHILE;
+
+    CLOSE cliente_cursor;
+END;
+
+SHOW EVENTS;
