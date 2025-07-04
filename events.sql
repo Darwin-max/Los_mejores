@@ -37,3 +37,25 @@ END $$
 
 DELIMITER ;
 
+-- 14. Desactivar tarjetas sin movimiento en 6 meses
+DELIMITER $$
+
+DROP EVENT IF EXISTS evt_desactivar_tarjetas_inactivas $$
+
+CREATE EVENT evt_desactivar_tarjetas_inactivas
+ON SCHEDULE EVERY 1 MONTH
+ENABLE
+DO
+BEGIN
+    UPDATE tarjeta
+    SET estado = 'Inactiva'
+    WHERE id NOT IN (
+        SELECT DISTINCT tarjeta_id FROM pago
+        WHERE fecha > DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
+    ) AND estado = 'Activa';
+
+END $$
+
+DELIMITER ;
+
+
