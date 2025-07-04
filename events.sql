@@ -19,3 +19,21 @@ END $$
 
 DELIMITER ;
 
+
+-- 12. Generar reporte mensual de cuotas de manejo
+DELIMITER $$
+
+DROP EVENT IF EXISTS evt_generar_reporte_cuotas_manejo  $$
+
+CREATE EVENT evt_generar_reporte_cuotas_manejo
+ON SCHEDULE EVERY 1 MONTH STARTS CURRENT_DATE + INTERVAL 1 MONT
+ENABLE
+DO
+BEGIN
+    INSERT INTO reporte_cuotas_manejo (fecha_generacion, total_cuotas)
+    SELECT NOW(), SUM(total_monto) FROM cuota_manejo;
+
+END $$
+
+DELIMITER ;
+
