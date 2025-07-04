@@ -223,3 +223,246 @@ BEGIN
         9, NEW.referencia, NEW.descripcion, 1;
 END $$
 DELIMITER ;
+
+
+-- estos son los triggers de kevin
+
+
+-- 5. Al actualizar los descuentos, recalcular las cuotas de manejo de las tarjetas afectadas.
+
+DELIMITER $$
+
+DROP TRIGGER IF EXISTS RecalcularCuotasAlActualizarDescuentos;
+
+CREATE TRIGGER RecalcularCuotasAlActualizarDescuentos
+AFTER UPDATE ON Tipo_Descuento
+FOR EACH ROW
+BEGIN
+    DECLARE tarjeta_id INT;
+    DECLARE cursor_tarjetas CURSOR FOR 
+        SELECT tarjeta_id_descuento 
+        FROM Tarjeta_Descuento_Historico 
+        WHERE tipo_descuento_id = NEW.id_tipo_descuento;
+
+    DECLARE CONTINUE HANDLER FOR NOT FOUND SET tarjeta_id = NULL;
+
+    OPEN cursor_tarjetas;
+
+    FETCH cursor_tarjetas INTO tarjeta_id;
+
+    WHILE tarjeta_id IS NOT NULL DO
+        -- Actualizar las cuotas de manejo de las tarjetas afectadas
+        UPDATE Cuota_Manejo
+        SET monto_final_a_pagar = monto_base * (1 - NEW.porcentaje_descuento)
+        WHERE tarjeta_id_cuota = tarjeta_id;
+
+        FETCH cursor_tarjetas INTO tarjeta_id;
+    END WHILE;
+
+    CLOSE cursor_tarjetas;
+END$$
+
+DELIMITER ;
+
+UPDATE Tipo_Descuento
+SET porcentaje_descuento = 0.20
+WHERE id_tipo_descuento = 1;
+
+SELECT * FROM Tipo_Descuento WHERE id_tipo_descuento = 1;
+
+
+-- 7. Bloquear tarjetas con más de 5 cuotas vencidas.
+
+DELIMITER $$
+
+CREATE FUNCTION ContarCuotasVencidas(tarjeta_id INT)
+RETURNS INT
+DETERMINISTIC
+BEGIN
+    RETURN (
+        SELECT COUNT(*)
+        FROM Cuota_Manejo
+        WHERE tarjeta_id_cuota = tarjeta_id AND estado_cuota_id = (SELECT id_estado_cuota FROM Estado_Cuota WHERE nombre_estado_cuota = 'Vencida')
+    );
+END$$
+
+DELIMITER $$
+
+CREATE TRIGGER BloquearTarjetasConMultiplesCuotasVencidas
+AFTER UPDATE ON Cuota_Manejo
+FOR EACH ROW
+BEGIN
+    DECLARE tarjeta_id INT;
+    DECLARE cursor_tarjetas CURSOR FOR 
+        SELECT tarjeta_id_cuota 
+        FROM Cuota_Manejo
+        WHERE estado_cuota_id = (SELECT id_estado_cuota FROM Estado_Cuota WHERE nombre_estado_cuota = 'Vencida');
+
+    DECLARE CONTINUE HANDLER FOR NOT FOUND SET tarjeta_id = NULL;
+
+    OPEN cursor_tarjetas;
+
+    FETCH cursor_tarjetas INTO tarjeta_id;
+
+    WHILE tarjeta_id IS NOT NULL DO
+        IF ContarCuotasVencidas(tarjeta_id) > 5 THEN
+            UPDATE Tarjeta
+            SET estado_tarjeta_id = (SELECT id_estado_tarjeta FROM Estado_Tarjeta WHERE nombre_estado_tarjeta = 'Bloqueada')
+            WHERE id_tarjeta = tarjeta_id;
+        END IF;
+
+        FETCH cursor_tarjetas INTO tarjeta_id;
+    END WHILE;
+
+    CLOSE cursor_tarjetas;
+END$$
+
+DELIMITER ;
+
+-- Verificación de cambios
+UPDATE Cuota_Manejo
+SET estado_cuota_id = (SELECT id_estado_cuota FROM Estado_Cuota WHERE nombre_estado_cuota = 'Vencida')
+WHERE id_cuota = 1;
+
+SELECT * FROM Tarjeta WHERE id_tarjeta = (SELECT tarjeta_id_cuota FROM Cuota_Manejo WHERE id_cuota = 2);
+
+
+-- 10. Registrar auditoría al actualizar el estado de una cuota de manejo.
+
+
+DELIMITER $$
+
+CREATE FUNCTION ObtenerEstadoCuota(cuota_id INT)
+RETURNS VARCHAR(50)
+DETERMINISTIC
+BEGIN
+    RETURN (
+        SELECT nombre_estado_cuota
+        FROM Estado_Cuota
+        WHERE id_estado_cuota = (
+            SELECT estado_cuota_id
+            FROM Cuota_Manejo
+            WHERE id_cuota = cuota_id
+        )
+    );
+END$$
+
+CREATE TRIGGER AuditoriaEstadoCuota
+AFTER UPDATE ON Cuota_Manejo
+FOR EACH ROW
+BEGIN
+    INSERT INTO Auditoria_Sistema (
+        fecha_hora, usuario_id_auditoria, accion, tabla_afectada, id_registro_afectado, detalles_json
+    ) VALUES (
+        NOW(),
+        NULL,
+        'Actualización de estado de cuota',
+        'Cuota_Manejo',
+        NEW.id_cuota,
+        JSON_OBJECT(
+            'estado_anterior', ObtenerEstadoCuota(OLD.id_cuota),
+            'estado_nuevo', ObtenerEstadoCuota(NEW.id_cuota)
+        )
+    );
+END$$
+
+DELIMITER ;
+
+SELECT * FROM Cuota_Manejo WHERE id_cuota = 2;
+SELECT * FROM Pago WHERE cuota_id_pago = 1;
+
+
+
+
+-- 13. Recalcular cuotas al actualizar descuentos.
+
+DELIMITER $$
+
+DROP FUNCTION IF EXISTS CalcularMontoFinalCuota;
+CREATE FUNCTION CalcularMontoFinalCuota(monto_base DECIMAL(10,2), porcentaje_descuento DECIMAL(5,4))
+RETURNS DECIMAL(10,2)
+DETERMINISTIC
+BEGIN
+    RETURN monto_base * (1 - porcentaje_descuento);
+END$$
+
+CREATE TRIGGER RecalcularCuotasDescuento
+AFTER UPDATE ON Tipo_Descuento
+FOR EACH ROW
+BEGIN
+    DECLARE tarjeta_id INT;
+    DECLARE cursor_tarjetas CURSOR FOR 
+        SELECT tarjeta_id_descuento
+        FROM Tarjeta_Descuento_Historico
+        WHERE tipo_descuento_id = NEW.id_tipo_descuento;
+
+    OPEN cursor_tarjetas;
+
+    FETCH cursor_tarjetas INTO tarjeta_id;
+
+    WHILE tarjeta_id IS NOT NULL DO
+        UPDATE Cuota_Manejo
+        SET monto_final_a_pagar = CalcularMontoFinalCuota(monto_base, NEW.porcentaje_descuento)
+        WHERE tarjeta_id_cuota = tarjeta_id;
+
+        FETCH cursor_tarjetas INTO tarjeta_id;
+    END WHILE;
+
+    CLOSE cursor_tarjetas;
+END$$
+
+DELIMITER ;
+
+SELECT * FROM Cuota_Manejo WHERE tarjeta_id_cuota = 4;
+SELECT * FROM Tarjeta WHERE id_tarjeta = 3;
+
+
+-- 18. Registrar auditoría al actualizar el estado de una tarjeta.
+
+DELIMITER $$
+
+CREATE FUNCTION ObtenerEstadoTarjeta(tarjeta_id INT)
+RETURNS VARCHAR(50)
+DETERMINISTIC
+BEGIN
+    RETURN (
+        SELECT nombre_estado_tarjeta
+        FROM Estado_Tarjeta
+        WHERE id_estado_tarjeta = (
+            SELECT estado_tarjeta_id
+            FROM Tarjeta
+            WHERE id_tarjeta = tarjeta_id
+        )
+    );
+END$$
+
+CREATE TRIGGER AuditoriaActualizacionEstadoTarjeta
+AFTER UPDATE ON Tarjeta
+FOR EACH ROW
+BEGIN
+    INSERT INTO Auditoria_Sistema (
+        fecha_hora, usuario_id_auditoria, accion, tabla_afectada, id_registro_afectado, detalles_json
+    ) VALUES (
+        NOW(),
+        NULL,
+        'Actualización de estado de tarjeta',
+        'Tarjeta',
+        NEW.id_tarjeta,
+        JSON_OBJECT(
+            'estado_anterior', ObtenerEstadoTarjeta(OLD.id_tarjeta),
+            'estado_nuevo', ObtenerEstadoTarjeta(NEW.id_tarjeta)
+        )
+    );
+END$$
+
+DELIMITER ;
+
+SELECT * 
+FROM Auditoria_Sistema 
+WHERE tabla_afectada = 'Tarjeta' 
+  AND accion = 'Actualización de estado de tarjeta' 
+ORDER BY fecha_hora DESC;
+
+SELECT * 
+FROM Tarjeta 
+WHERE id_tarjeta = 3;
