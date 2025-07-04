@@ -171,3 +171,18 @@ BEGIN
 END $$
 
 DELIMITER ;
+
+
+-- Eventos de kevin 
+
+-- 13. Generar un reporte de clientes con pagos pendientes.
+
+CREATE EVENT GenerarReporteClientesConPagosPendientes
+ON SCHEDULE EVERY 1 MONTH
+DO
+INSERT INTO Reporte_Clientes_Pendientes (cliente_id, total_pendiente)
+SELECT cliente_id_tarjeta, SUM(monto_final_a_pagar)
+FROM Cuota_Manejo CM
+JOIN Tarjeta T ON CM.tarjeta_id_cuota = T.id_tarjeta
+WHERE CM.estado_cuota_id = (SELECT id_estado_cuota FROM Estado_Cuota WHERE nombre_estado_cuota = 'Pendiente')
+GROUP BY cliente_id_tarjeta;
