@@ -500,3 +500,187 @@ DELIMITER ;
 
 -- Ejemplo de uso:
 SELECT TotalCuotasVencidasPorClienteYSucursal(6, 1);
+
+
+
+ -- funciones: ejercicios santiago
+
+
+-- Calcular el total pendiente de cuota de manejo de pago de un cliente.
+ DELIMITER //
+
+DROP FUNCTION IF EXISTS fn_saldo_pendiente;
+CREATE FUNCTION fn_saldo_pendiente(p_cliente_id INT)
+RETURNS DECIMAL(10,2)
+DETERMINISTIC
+BEGIN
+    DECLARE done INT DEFAULT FALSE;
+    DECLARE _total_cuota DECIMAL(10,2);
+    DECLARE _id_cuota INT;
+    DECLARE _total_restante DECIMAL(10,2);
+    DECLARE _pagos_clientes DECIMAL(10,2) DEFAULT 0.00;
+    DECLARE _pago_individual DECIMAL(10,2);
+
+    DECLARE cur CURSOR FOR
+        SELECT IFNULL(p.total_pago, 0)
+        FROM Clientes cl
+        INNER JOIN Cuentas cu ON cu.cliente_id = cl.id
+        INNER JOIN Tarjetas t ON t.cuenta_id = cu.id
+        LEFT JOIN Cuotas_de_manejo cm ON cm.tarjeta_id = t.id
+        LEFT JOIN Pagos p ON p.cuota_id = cm.id
+        WHERE cl.id = p_cliente_id;
+
+    DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = TRUE;
+
+    SELECT IFNULL(SUM(cm.monto_total), 0) INTO _total_cuota
+    FROM Clientes cl
+    INNER JOIN Cuentas cu ON cu.cliente_id = cl.id
+    INNER JOIN Tarjetas t ON t.cuenta_id = cu.id
+    LEFT JOIN Cuotas_de_manejo cm ON cm.tarjeta_id = t.id
+    WHERE cl.id = p_cliente_id;
+
+    IF _total_cuota = 0 THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'El cliente no paga cuota de manejo';
+    END IF;
+
+    OPEN cur;
+        read_loop: LOOP
+            FETCH cur INTO _pago_individual;
+            IF done THEN
+                LEAVE read_loop;
+            END IF;
+            SET _pagos_clientes = _pagos_clientes + IFNULL(_pago_individual, 0);
+        END LOOP;
+
+        SET _total_restante = _total_cuota - _pagos_clientes;
+    CLOSE cur;
+
+    IF _total_restante < 0 THEN
+        SET _total_restante = 0;
+    END IF;
+
+    RETURN _total_restante;
+
+
+END //
+DELIMITER ;
+
+SELECT fn_saldo_pendiente(1) AS Total_pendiente;
+
+-- Calcular el total pendiente de las cuotas de credito de un cliente.
+
+DELIMITER //
+
+DROP FUNCTION IF EXISTS fn_cuotas_credito;
+CREATE FUNCTION fn_cuotas_credito(p_cliente_id INT)
+RETURNS DECIMAL(10,2)
+DETERMINISTIC
+BEGIN
+    DECLARE _total_deuda DECIMAL(10,2) DEFAULT 0;
+
+    SELECT IFNULL(SUM(cc.valor_cuota), 0) INTO _total_deuda
+    FROM Clientes cl
+    INNER JOIN Cuentas cu ON cu.cliente_id = cl.id
+    INNER JOIN Tarjetas t ON t.cuenta_id = cu.id
+    INNER JOIN Movimientos_tarjeta mt ON mt.tarjeta_id = t.id
+    LEFT JOIN Cuotas_credito cc ON cc.movimiento_id = mt.id
+    WHERE cl.id = p_cliente_id AND cc.estado = 'Pendiente';
+
+    RETURN _total_deuda;
+END //
+
+DELIMITER ;
+
+SELECT fn_cuotas_credito(1) AS Total_deuda;
+
+-- Estimar el total de pagos realizados por tipo de tarjeta durante un período determinado.
+
+DELIMITER //
+
+DROP FUNCTION IF EXISTS fn_total_pagos_por_tipo;
+CREATE FUNCTION fn_total_pagos_por_tipo(p_tipo_tarjeta_id INT, p_fecha_inicio DATE, p_fecha_fin DATE)
+RETURNS DECIMAL(10,2)
+DETERMINISTIC
+BEGIN
+    DECLARE _total DECIMAL(10,2) DEFAULT 0;
+
+    SELECT IFNULL(SUM(pt.monto), 0) INTO _total
+    FROM Pagos_tarjeta pt
+    INNER JOIN Cuotas_credito cc ON pt.cuota_credito_id = cc.id
+    INNER JOIN Movimientos_tarjeta mt ON cc.movimiento_id = mt.id
+    INNER JOIN Tarjetas t ON mt.tarjeta_id = t.id
+    WHERE t.tipo_tarjeta_id = p_tipo_tarjeta_id AND pt.fecha_pago BETWEEN p_fecha_inicio AND p_fecha_fin;
+
+    RETURN _total;
+END //
+
+DELIMITER ;
+
+SELECT fn_total_pagos_por_tipo(1, '2020-01-01', '2026-01-01')
+
+-- Calcular el monto total de las cuotas de manejo para todos los clientes de un mes.
+
+DELIMITER //
+
+DROP FUNCTION IF EXISTS fn_total_cuotas_manejo_mes;
+CREATE FUNCTION fn_total_cuotas_manejo_mes(p_mes INT, p_anio INT)
+RETURNS DECIMAL(10,2)
+DETERMINISTIC
+BEGIN
+    DECLARE _total DECIMAL(10,2) DEFAULT 0;
+
+    SELECT SUM(monto_total) INTO _total
+    FROM Cuotas_de_manejo
+    WHERE MONTH(vencimiento_cuota) = p_mes AND YEAR(vencimiento_cuota) = p_anio;
+
+    RETURN _total;
+END //
+
+DELIMITER ;
+
+SELECT fn_total_cuotas_manejo_mes(6, 2025);
+
+
+--  Calcular cuánto le falta por pagar a un cliente en cuotas de crédito
+
+DELIMITER //
+
+DROP FUNCTION IF EXISTS fn_total_credito_pendiente_cliente;
+CREATE FUNCTION fn_total_credito_pendiente_cliente(p_cliente_id INT)
+RETURNS DECIMAL(10,2)
+DETERMINISTIC
+BEGIN
+    DECLARE _total_credito DECIMAL(10,2) DEFAULT 0.00;
+    DECLARE _pagado DECIMAL(10,2) DEFAULT 0.00;
+    DECLARE _pendiente DECIMAL(10,2);
+
+    SELECT IFNULL(SUM(cc.valor_cuota), 0) INTO _total_credito
+    FROM Clientes cl
+    JOIN Cuentas cu ON cu.cliente_id = cl.id
+    JOIN Tarjetas t ON t.cuenta_id = cu.id
+    JOIN Movimientos_tarjeta mt ON mt.tarjeta_id = t.id
+    JOIN Cuotas_credito cc ON cc.movimiento_id = mt.id
+    WHERE cl.id = p_cliente_id AND cc.estado = 'Pendiente';
+
+    SELECT IFNULL(SUM(pt.monto), 0) INTO _pagado
+    FROM Clientes cl
+    JOIN Cuentas cu ON cu.cliente_id = cl.id
+    JOIN Tarjetas t ON t.cuenta_id = cu.id
+    JOIN Movimientos_tarjeta mt ON mt.tarjeta_id = t.id
+    JOIN Cuotas_credito cc ON cc.movimiento_id = mt.id
+    JOIN Pagos_tarjeta pt ON pt.cuota_credito_id = cc.id
+    WHERE cl.id = p_cliente_id AND cc.estado = 'Pendiente';
+
+    SET _pendiente = _total_credito - _pagado;
+
+    IF _pendiente < 0 THEN
+        SET _pendiente = 0;
+    END IF;
+
+    RETURN _pendiente;
+END //
+
+DELIMITER ;
+
+SELECT fn_total_credito_pendiente_cliente(1) AS Total_pendiente;
