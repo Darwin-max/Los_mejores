@@ -357,3 +357,146 @@ END $$
 DELIMITER ;
 
 SELECT fn_calcular_interes_fecha(1, '2025-06-30') AS interes_calculado;
+
+
+
+-- funciones de kevin 
+
+
+
+
+-- 2. Estimar el descuento total aplicado sobre la cuota de manejo.
+
+DELIMITER $$
+
+CREATE FUNCTION EstimarDescuentoTotal(
+    cuota_id INT
+) RETURNS DECIMAL(10,2)
+DETERMINISTIC
+BEGIN
+    DECLARE descuento_total DECIMAL(10,2);
+
+    -- Calcular el descuento total aplicado
+    SELECT monto_base - monto_final_a_pagar INTO descuento_total
+    FROM Cuota_Manejo
+    WHERE id_cuota = cuota_id;
+
+    RETURN descuento_total;
+END$$
+
+DELIMITER ;
+
+-- Ejemplo de uso:
+SELECT EstimarDescuentoTotal(6);
+
+
+-- 3. Calcular el saldo pendiente de pago de un cliente.
+
+DELIMITER $$
+
+CREATE FUNCTION CalcularSaldoPendiente(
+    cliente_id INT
+) RETURNS DECIMAL(10,2)
+DETERMINISTIC
+BEGIN
+    DECLARE saldo_pendiente DECIMAL(10,2);
+
+    -- Calcular el saldo pendiente sumando las cuotas vencidas
+    SELECT SUM(monto_final_a_pagar) INTO saldo_pendiente
+    FROM Cuota_Manejo CM
+    JOIN Tarjeta T ON CM.tarjeta_id_cuota = T.id_tarjeta
+    WHERE T.cliente_id_tarjeta = cliente_id
+      AND CM.estado_cuota_id = (SELECT id_estado_cuota FROM Estado_Cuota WHERE nombre_estado_cuota = 'Pendiente');
+
+    RETURN saldo_pendiente;
+END$$
+
+DELIMITER ;
+
+-- Ejemplo de uso:
+SELECT CalcularSaldoPendiente(6);
+
+
+
+-- 19. Calcular el total de pagos realizados por cliente y estado de cuota en el último trimestre.
+
+DELIMITER $$
+
+CREATE FUNCTION TotalPagosPorClienteYEstadoCuotaUltimoTrimestre(
+    cliente_id INT,
+    estado_cuota_id INT
+) RETURNS DECIMAL(10,2)
+DETERMINISTIC
+BEGIN
+    DECLARE total_pagos DECIMAL(10,2);
+
+    SELECT SUM(P.monto_pagado) INTO total_pagos
+    FROM Pago P
+    JOIN Cuota_Manejo CM ON P.cuota_id_pago = CM.id_cuota
+    JOIN Tarjeta T ON CM.tarjeta_id_cuota = T.id_tarjeta
+    WHERE T.cliente_id_tarjeta = cliente_id AND CM.estado_cuota_id = estado_cuota_id AND P.fecha_pago >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH);
+
+    RETURN total_pagos;
+END$$
+
+DELIMITER ;
+
+-- Ejemplo de uso:
+SELECT TotalPagosPorClienteYEstadoCuotaUltimoTrimestre(6, 1);
+
+-- 20. Calcular el total de pagos realizados por cliente y tipo de tarjeta en el último año.
+
+DELIMITER $$
+
+CREATE FUNCTION TotalPagosPorClienteYTipoTarjetaUltimoAnio(
+    cliente_id INT,
+    tipo_tarjeta_id INT
+) RETURNS DECIMAL(10,2)
+DETERMINISTIC
+BEGIN
+    DECLARE total_pagos DECIMAL(10,2);
+
+    SELECT SUM(P.monto_pagado) INTO total_pagos
+    FROM Pago P
+    JOIN Cuota_Manejo CM ON P.cuota_id_pago = CM.id_cuota
+    JOIN Tarjeta T ON CM.tarjeta_id_cuota = T.id_tarjeta
+    WHERE T.cliente_id_tarjeta = cliente_id AND T.tipo_tarjeta_id = tipo_tarjeta_id AND YEAR(P.fecha_pago) = YEAR(CURDATE()) - 1;
+
+    RETURN total_pagos;
+END$$
+
+DELIMITER ;
+
+-- Ejemplo de uso:
+SELECT TotalPagosPorClienteYTipoTarjetaUltimoAnio(6, 2);
+
+
+
+-- 12. Calcular el total de cuotas vencidas por cliente y sucursal.
+
+DELIMITER $$
+
+CREATE FUNCTION TotalCuotasVencidasPorClienteYSucursal(
+    cliente_id INT,
+    sucursal_id INT
+) RETURNS INT
+DETERMINISTIC
+BEGIN
+    DECLARE total_cuotas INT;
+
+    SELECT COUNT(CM.id_cuota) INTO total_cuotas
+    FROM Cuota_Manejo CM
+    JOIN Tarjeta T ON CM.tarjeta_id_cuota = T.id_tarjeta
+    JOIN Cliente C ON T.cliente_id_tarjeta = C.id_cliente
+    JOIN Usuario U ON C.id_cliente = U.id_usuario
+    JOIN Empleado E ON U.id_usuario = E.id_empleado
+    JOIN Sucursal S ON E.sucursal_id_empleado = S.id_sucursal
+    WHERE T.cliente_id_tarjeta = cliente_id AND S.id_sucursal = sucursal_id AND CM.estado_cuota_id = (SELECT id_estado_cuota FROM Estado_Cuota WHERE nombre_estado_cuota = 'Vencida');
+
+    RETURN total_cuotas;
+END$$
+
+DELIMITER ;
+
+-- Ejemplo de uso:
+SELECT TotalCuotasVencidasPorClienteYSucursal(6, 1);
